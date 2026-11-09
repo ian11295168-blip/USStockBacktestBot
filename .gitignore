@@ -1,0 +1,69 @@
+
+.env
+venv/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+__pycache__/
+
+# Deployment privacy protection
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.db-*
+*.sqlite
+*.sqlite3
+*.py[cod]
+.venv/
+.pytest_cache/
+.idea/
+.vscode/
+
+# Private database snapshots
+local_db_backups/
+
+# API Keys and passwords
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
+
+# Local SQLite databases
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Private backups and sync records
+local_db_backups/
+*.db.bak
+*.json.bak
+
+# Python environment
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local editor settings
+.vscode/
+.idea/
+
+# Temporary files
+*.log
+*.tmp
+.DS_Store
+
+# Streamlit temporary data
+.streamlit/cache/
+# Old code backups
+backup/
+web_app_v*_backup.py
+secure_app_v*_backup.py
+requirements_candidate.txt
