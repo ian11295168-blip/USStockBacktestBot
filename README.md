@@ -34,7 +34,9 @@ Buy AAPL when RSI(14) is below 30. Sell when RSI(14) is above 70. Apply a 7% fix
 
 ## Live Application
 
-**Live Demo:** Add your public Streamlit URL here.
+[Try US Stock Strategy Lab](https://ian11295168-blip-usstockbacktestbot-secure-app-erimot.streamlit.app/)
+
+Explore AI-powered strategy parsing, historical backtesting, A/B comparison, and performance analytics directly in your browser.
 
 Visitors can explore the interactive backtesting features through a guest workspace without accessing private strategy records.
 
