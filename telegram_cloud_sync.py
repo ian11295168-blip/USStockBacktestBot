@@ -33,8 +33,9 @@ from psycopg.types.json import Jsonb
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
-LOCAL_DB = ROOT / "strategies.db"
-PRIVATE_DIR = ROOT / "local_db_backups"
+DATA_DIR = Path(os.environ.get("TELEGRAM_DATA_DIR") or ROOT).resolve()
+LOCAL_DB = DATA_DIR / "strategies.db"
+PRIVATE_DIR = DATA_DIR / "local_db_backups"
 BACKUP_DIR = PRIVATE_DIR / "telegram_cloud_snapshots"
 STATUS_FILE = PRIVATE_DIR / "telegram_sync_status.json"
 
@@ -261,7 +262,7 @@ def prepare_private_dir():
         for line in content.splitlines()
     }
 
-    if "local_db_backups/" not in rules:
+    if DATA_DIR == ROOT and "local_db_backups/" not in rules:
         with gitignore.open(
             "a", encoding="utf-8"
         ) as file:

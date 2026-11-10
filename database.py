@@ -1,13 +1,17 @@
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 
-DB_PATH = Path(__file__).resolve().parent / "strategies.db"
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("TELEGRAM_DATA_DIR") or ROOT).resolve()
+DB_PATH = DATA_DIR / "strategies.db"
 
 
 def connect():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
