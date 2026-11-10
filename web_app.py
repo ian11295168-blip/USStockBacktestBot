@@ -637,11 +637,7 @@ DEFAULTS = {
     "last_result": None,
     "ab_result": None,
     "ab_pair": None,
-    "strategy_input": (
-        "NVDA RSI14低於30買進，"
-        "RSI14高於70賣出，"
-        "固定停損5%，回測5年"
-    ),
+    "strategy_input": "",
     "nav_page": "🤖 AI 策略回測",
     "_storage_notice": None,
 }
