@@ -1,6 +1,6 @@
 
 """US Stock Strategy Lab v4.3
-本機 / Supabase 雙模式網頁。
+本機 / Supabase 雙模式Web。
 
 啟動：
     python -m streamlit run secure_app.py
@@ -14,7 +14,7 @@ local：
     SQLite 優先保存，再同步 Supabase。
 
 cloud：
-    直接讀寫 Supabase，不使用網頁 SQLite。
+    直接讀寫 Supabase，不使用Web SQLite。
     使用載入時的 baseline 保護雲端資料。
 
 注意：
@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 
 from universal_ai_parser import parse_universal_strategy
 from universal_backtest import run_universal_backtest
-from strategy_summary_v2 import format_strategy_summary
+from strategy_summary_en import format_strategy_summary
 from strategy_diff import format_strategy_diff
 from performance_metrics import calculate_performance_metrics
 
@@ -43,7 +43,7 @@ from strategy_ab_comparison import (
 
 from yearly_performance import (
     calculate_yearly_performance,
-    format_yearly_report,
+    format_yearly_report_en,
 )
 
 from trade_analytics import (
@@ -53,7 +53,7 @@ from trade_analytics import (
 
 from out_of_sample import (
     analyze_out_of_sample,
-    format_oos_report,
+    format_oos_report_en,
 )
 
 from web_storage_router import (
@@ -95,26 +95,39 @@ try:
     STORAGE_MODE = get_storage_mode()
 except Exception as exc:
     st.error(
-        "❌ 資料儲存模式設定錯誤。"
-        "請檢查 STOCK_STORAGE_MODE。"
+        "❌ Invalid storage mode."
+        "Check STOCK_STORAGE_MODE."
     )
     st.caption(type(exc).__name__)
     st.stop()
 
 IS_CLOUD = STORAGE_MODE == "cloud"
+IS_GUEST = not st.session_state.get("_lab_authenticated", False)
+
+# Guests use the original backtesting and AI modules, but session-only storage.
+# No guest execution path may read or write a private database.
+import threading
+
+@st.cache_resource
+def guest_ai_budget():
+    return {"lock": threading.Lock(), "used": 0}
+
+GUEST_AI_PER_SESSION = 5
+GUEST_AI_PER_PROCESS = 100
+
 
 
 def fmt(value, digits=2, suffix="", signed=False):
     if value is None:
-        return "無法計算"
+        return "N/A"
 
     try:
         num = float(value)
     except (TypeError, ValueError):
-        return "無法計算"
+        return "N/A"
 
     if not math.isfinite(num):
-        return "無法計算"
+        return "N/A"
 
     flag = "+" if signed else ""
 
@@ -135,17 +148,17 @@ def money(value):
 
 def setting(value):
     if value is None:
-        return "未設定"
+        return "Not set"
 
     try:
         return f"{float(value):g}%"
     except (TypeError, ValueError):
-        return "未知"
+        return "Unknown"
 
 
 def show_strategy(strategy):
     if not isinstance(strategy, dict):
-        st.info("目前沒有可顯示的策略")
+        st.info("No strategy to display")
         return
 
     try:
@@ -167,15 +180,15 @@ def get_metrics(result):
 def scorecards(stats, metrics):
     fields = [
         (
-            "策略總報酬",
+            "Strategy total return",
             pct(stats.get("total_return"), True),
         ),
         (
-            "最大回撤",
+            "Max drawdown",
             pct(stats.get("max_drawdown")),
         ),
         (
-            "CAGR 年化報酬",
+            "CAGR",
             pct(metrics.get("cagr"), True),
         ),
         (
@@ -183,11 +196,11 @@ def scorecards(stats, metrics):
             fmt(metrics.get("sharpe_ratio")),
         ),
         (
-            "勝率",
+            "Win rate",
             pct(stats.get("win_rate")),
         ),
         (
-            "交易次數",
+            "Trade count",
             str(stats.get("trade_count", 0)),
         ),
         (
@@ -195,7 +208,7 @@ def scorecards(stats, metrics):
             pct(stats.get("buy_hold_return"), True),
         ),
         (
-            "期末資產",
+            "Ending equity",
             money(stats.get("final_equity")),
         ),
     ]
@@ -210,11 +223,11 @@ def scorecards(stats, metrics):
             st.metric(*fields[i + 1])
 
     st.caption(
-        "初始資金 $10,000｜目前持倉："
+        "Initial capital $10,000 | Open position: "
         + (
-            "有"
+            "Yes"
             if stats.get("open_position")
-            else "無"
+            else "No"
         )
     )
 
@@ -242,23 +255,23 @@ def equity_curve(df):
     )
 
     if curve.empty:
-        raise ValueError("沒有可顯示的資產資料")
+        raise ValueError("No equity data available")
 
     first_close = float(curve["close"].iloc[0])
 
     if first_close <= 0:
-        raise ValueError("起始收盤價錯誤")
+        raise ValueError("Invalid starting close price")
 
-    curve["策略資產"] = curve["equity"]
+    curve["Strategy Equity"] = curve["equity"]
 
-    curve["買進持有"] = (
+    curve["Buy & Hold"] = (
         curve["close"]
         / first_close
         * 10000.0
     )
 
     return curve.set_index("timestamp")[
-        ["策略資產", "買進持有"]
+        ["Strategy Equity", "Buy & Hold"]
     ]
 
 
@@ -278,11 +291,11 @@ def ab_curve(result):
         )
 
     a = a.rename(
-        columns={"equity": "策略 A"}
+        columns={"equity": "Strategy A"}
     )
 
     b = b.rename(
-        columns={"equity": "策略 B"}
+        columns={"equity": "Strategy B"}
     )
 
     merged = pd.merge(
@@ -295,7 +308,7 @@ def ab_curve(result):
 
     if merged.empty:
         raise ValueError(
-            "A/B 沒有共同的交易日期"
+            "A/B results have no overlapping trading days"
         )
 
     return (
@@ -312,7 +325,7 @@ def show_ab(result):
 
     rows = [
         (
-            "總報酬",
+            "Total return",
             pct(sa.get("total_return"), True),
             pct(sb.get("total_return"), True),
         ),
@@ -327,22 +340,22 @@ def show_ab(result):
             fmt(mb.get("sharpe_ratio")),
         ),
         (
-            "最大回撤",
+            "Max drawdown",
             pct(sa.get("max_drawdown")),
             pct(sb.get("max_drawdown")),
         ),
         (
-            "勝率",
+            "Win rate",
             pct(sa.get("win_rate")),
             pct(sb.get("win_rate")),
         ),
         (
-            "交易次數",
+            "Trade count",
             str(sa.get("trade_count", 0)),
             str(sb.get("trade_count", 0)),
         ),
         (
-            "期末資產",
+            "Ending equity",
             money(sa.get("final_equity")),
             money(sb.get("final_equity")),
         ),
@@ -352,22 +365,22 @@ def show_ab(result):
         pd.DataFrame(
             rows,
             columns=[
-                "指標",
-                "策略 A",
-                "策略 B",
+                "Metric",
+                "Strategy A",
+                "Strategy B",
             ],
-        ).set_index("指標"),
+        ).set_index("Metric"),
         use_container_width=True,
     )
 
-    st.subheader("A/B 資產曲線")
+    st.subheader("A/B Equity Curves")
 
     st.line_chart(
         ab_curve(result),
         height=360,
     )
 
-    with st.expander("詳細比較報告"):
+    with st.expander("Detailed comparison report"):
         st.text(format_ab_report(result))
 
 
@@ -412,8 +425,8 @@ def try_local_cloud_sync():
             return {
                 "status": "success",
                 "message": (
-                    "✅ 本機 SQLite 與 "
-                    "Supabase 雲端已保存"
+                    "✅ Local SQLite and "
+                    "Supabase saved"
                 ),
             }
 
@@ -430,18 +443,18 @@ def try_local_cloud_sync():
             return {
                 "status": "conflict",
                 "message": (
-                    "⚠️ 雲端版本發生衝突。"
-                    "本機 SQLite 已保存，"
-                    "但停止覆蓋雲端。"
+                    "⚠️ Cloud version conflict。"
+                    "Local SQLite saved，"
+                    "but cloud overwrite was blocked."
                 ),
             }
 
         return {
             "status": "pending",
             "message": (
-                "⚠️ 本機 SQLite 已保存，"
-                "但 Supabase 同步失敗。"
-                "可稍後重新同步。"
+                "⚠️ Local SQLite saved，"
+                "but Supabase sync failed."
+                "Please retry later."
                 f"（{type(exc).__name__}）"
             ),
         }
@@ -460,6 +473,12 @@ def persist_state(
     本機模式保存成功後，
     雲端同步失敗不會取消 SQLite 結果。
     """
+
+    if IS_GUEST:
+        return {
+            "status": "success",
+            "message": "Saved in this browser session only. No private database was accessed.",
+        }
 
     if IS_CLOUD:
         baseline = st.session_state.get(
@@ -483,7 +502,7 @@ def persist_state(
         return {
             "status": "success",
             "message": (
-                "✅ Supabase 雲端資料已保存"
+                "✅ Saved to Supabase"
             ),
         }
 
@@ -498,22 +517,27 @@ def persist_state(
 
 
 def show_storage_sidebar():
+    if IS_GUEST:
+        st.info("Guest workspace: strategies and results are kept in this browser session only.")
+        st.caption("Refreshing or closing this session may clear your work. The owner's database is never accessed.")
+        return
+
     st.subheader(
-        "☁️ Supabase 雲端儲存"
+        "☁️ Supabase Storage"
         if IS_CLOUD
-        else "💾 本機與雲端同步"
+        else "💾 Local / Cloud Sync"
     )
 
     if IS_CLOUD:
-        st.success("目前使用 Supabase")
+        st.success("Using Supabase")
 
         st.caption(
-            "回測直接保存 PostgreSQL，"
-            "不使用本機網頁 SQLite。"
+            "Backtests are saved directly to PostgreSQL;"
+            "no local web SQLite is used."
         )
 
         if st.button(
-            "🔄 重新讀取雲端版本",
+            "🔄 Reload Cloud Version",
             key="reload_cloud_state",
             use_container_width=True,
         ):
@@ -522,8 +546,8 @@ def show_storage_sidebar():
                 "pending_strategy"
             ) is not None:
                 st.warning(
-                    "請先確認或取消待確認策略，"
-                    "再重新讀取雲端。"
+                    "Confirm or discard the pending strategy"
+                    "before reloading cloud data."
                 )
             else:
                 try:
@@ -558,19 +582,19 @@ def show_storage_sidebar():
 
                     record_notice(
                         "success",
-                        "✅ 已重新讀取 Supabase 最新版本",
+                        "✅ Latest Supabase version loaded",
                     )
                     st.rerun()
 
                 except Exception as exc:
                     st.error(
-                        "無法重新讀取雲端資料："
+                        "Unable to reload cloud data: "
                         + type(exc).__name__
                     )
 
         st.caption(
-            "重新讀取會更新目前網頁狀態，"
-            "但不會修改雲端資料。"
+            "Reload replaces the current session view"
+            "without modifying cloud data."
         )
 
     else:
@@ -585,36 +609,36 @@ def show_storage_sidebar():
 
         if code == "synced":
             st.success(
-                "本機與上次成功同步版本一致"
+                "Matches the last successful sync version"
             )
 
         elif code == "pending":
             st.warning(
-                "本機有尚未同步的變更"
+                "Local changes are pending sync"
             )
 
         elif code == "uninitialized":
             st.warning(
-                "尚未初始化同步基準"
+                "Sync baseline not initialized"
             )
 
         else:
             st.error(
-                "無法確認同步狀態"
+                "Unable to verify sync status"
             )
 
         st.caption(
-            "這是本機同步紀錄，"
-            "不是即時雲端狀態。"
+            "This is a local sync status,"
+            "not a real-time cloud status."
         )
 
         if st.button(
-            "🔄 重新同步雲端",
+            "🔄 Retry Cloud Sync",
             key="retry_cloud_sync",
             use_container_width=True,
         ):
             with st.spinner(
-                "正在同步 Supabase..."
+                "Syncing Supabase..."
             ):
                 result = try_local_cloud_sync()
 
@@ -638,7 +662,7 @@ DEFAULTS = {
     "ab_result": None,
     "ab_pair": None,
     "strategy_input": "",
-    "nav_page": "🤖 AI 策略回測",
+    "nav_page": "🤖 AI Strategy Backtest",
     "_storage_notice": None,
 }
 
@@ -649,22 +673,23 @@ for key, value in DEFAULTS.items():
 
 # 只有第一次載入或切換資料模式，
 # 才重設並讀取對應資料庫。
+ACTIVE_MODE = "guest-session" if IS_GUEST else STORAGE_MODE
 if st.session_state.get(
     "_storage_active_mode"
-) != STORAGE_MODE:
+) != ACTIVE_MODE:
 
     try:
-        snapshot = load_state(STORAGE_MODE)
+        snapshot = {"state": {}, "baseline": None} if IS_GUEST else load_state(STORAGE_MODE)
 
     except Exception as exc:
         st.error(
-            "❌ 無法載入目前模式的資料。"
-            "網站已停止載入，"
-            "不會自動切回 SQLite，"
-            "避免誤用其他版本。"
+            "❌ Unable to load data for the selected mode."
+            "The app stopped loading;"
+            "it will not fall back to SQLite"
+            "to avoid using an incorrect version."
         )
         st.caption(
-            "錯誤類型："
+            "Error type: "
             + type(exc).__name__
         )
         st.stop()
@@ -706,7 +731,7 @@ if st.session_state.get(
 
     st.session_state[
         "_storage_active_mode"
-    ] = STORAGE_MODE
+    ] = ACTIVE_MODE
 
 
 # ==========================================
@@ -714,6 +739,13 @@ if st.session_state.get(
 # ==========================================
 
 def get_telegram_data():
+    if IS_GUEST:
+        return {
+            "confirmed_strategy": None,
+            "strategy_history": [],
+            "pending": None,
+            "latest_backtest": None,
+        }
     """依模式取得 Telegram 已保存資料。
 
     local：本機 SQLite
@@ -732,7 +764,7 @@ def get_telegram_data():
 
     if not owner_id:
         raise RuntimeError(
-            "雲端模式需要設定 TELEGRAM_OWNER_ID"
+            "Cloud mode requires TELEGRAM_OWNER_ID"
         )
 
     all_states = get_cloud_telegram_states()
@@ -779,32 +811,41 @@ def get_telegram_data():
 
 
 # ==========================================
-# 5. 左側功能選單
+# 5. 左側Navigation
 # ==========================================
 
 MENU = [
-    "🤖 AI 策略回測",
-    "⚖️ A/B 策略比較",
-    "📈 績效分析",
-    "📋 交易明細",
-    "📅 年度績效",
-    "🧪 樣本內／樣本外",
-    "📱 Telegram 紀錄與匯入",
-    "🔄 雙端同步檢查",
+    "🤖 AI Strategy Backtest",
+    "⚖️ A/B Strategy Comparison",
+    "📈 Performance Analysis",
+    "📋 Trade History",
+    "📅 Annual Performance",
+    "🧪 In-sample / Out-of-sample",
+    "📱 Telegram Records & Import",
+    "🔄 Cross-platform Comparison",
 ]
+if IS_GUEST:
+    # The owner's Telegram snapshots are intentionally unavailable to guests.
+    MENU = [name for name in MENU if not name.startswith(("📱", "🔄"))]
 
+
+if IS_GUEST and st.session_state.get("nav_page") not in MENU:
+    st.session_state["nav_page"] = MENU[0]
 
 with st.sidebar:
     st.title("📈 US Stock Strategy Lab")
-    st.caption("網頁版 v4.3")
+    st.caption("Guest workspace | Full AI & backtesting" if IS_GUEST else "Owner workspace v4.3")
 
-    if IS_CLOUD:
-        st.info("☁️ 雲端模式：Supabase")
+    if IS_GUEST:
+        st.info("🌐 Guest mode: private data isolated")
+        st.caption("AI usage: " + str(st.session_state.get("_guest_ai_used", 0)) + "/5 per session")
+    elif IS_CLOUD:
+        st.info("☁️ Cloud Mode: Supabase")
     else:
-        st.info("💻 本機模式：SQLite")
+        st.info("💻 Local Mode: SQLite")
 
     page = st.radio(
-        "功能選單",
+        "Navigation",
         MENU,
         key="nav_page",
     )
@@ -820,31 +861,31 @@ with st.sidebar:
     ]
 
     if isinstance(confirmed, dict):
-        st.success("✅ 已確認策略")
+        st.success("✅ Confirmed Strategy")
 
         st.write(
-            "股票：",
-            confirmed.get("symbol", "未知"),
+            "Ticker:",
+            confirmed.get("symbol", "Unknown"),
         )
 
         st.write(
-            "固定停損：",
+            "Fixed stop loss:",
             setting(
                 confirmed.get("stop_loss")
             ),
         )
 
     else:
-        st.info("尚未有已確認策略")
+        st.info("No confirmed strategy yet")
 
     if isinstance(pending, dict):
-        st.warning("📝 有待確認策略")
+        st.warning("📝 Pending strategy")
 
     st.divider()
-    st.subheader("💾 儲存策略")
+    st.subheader("💾 Session Save" if IS_GUEST else "💾 Save Strategy")
 
     if st.button(
-        "儲存已確認策略與回測",
+        "Save Confirmed Strategy and Backtest",
         key="manual_save",
         use_container_width=True,
     ):
@@ -865,9 +906,9 @@ with st.sidebar:
             result_notice = {
                 "status": "conflict",
                 "message": (
-                    "❌ 雲端資料已被其他來源修改，"
-                    "本次保存已取消。"
-                    "請檢查雲端最新版本。"
+                    "❌ Cloud data was modified elsewhere;"
+                    "this save was canceled."
+                    "Please review the latest cloud version."
                 ),
             }
 
@@ -875,7 +916,7 @@ with st.sidebar:
             result_notice = {
                 "status": "error",
                 "message": (
-                    "❌ 保存失敗："
+                    "❌ Save failed: "
                     + type(exc).__name__
                 ),
             }
@@ -890,13 +931,15 @@ with st.sidebar:
 
     show_storage_sidebar()
 
-    if IS_CLOUD:
+    if IS_GUEST:
+        st.caption("Your guest session cannot read the owner's Telegram records.")
+    elif IS_CLOUD:
         st.caption(
-            "Telegram 使用 Supabase 已同步快照。"
+            "Telegram records are read from Supabase."
         )
     else:
         st.caption(
-            "Telegram 與網頁 SQLite 分開保存。"
+            "Telegram and web data are stored separately."
         )
 
 
@@ -909,12 +952,12 @@ show_notice(
 # 6. AI 策略回測
 # ==========================================
 
-if page == "🤖 AI 策略回測":
-    st.title("🤖 AI 自然語言策略回測")
+if page == "🤖 AI Strategy Backtest":
+    st.title("🤖 AI Natural-language Strategy Backtesting")
 
     st.write(
-        "輸入中文策略，AI 解析後由你確認，"
-        "再進行歷史回測。"
+        "Describe a trading strategy. Review the AI interpretation,"
+        "then run the historical backtest."
     )
 
     existing = (
@@ -923,24 +966,40 @@ if page == "🤖 AI 策略回測":
     )
 
     new_strategy = st.checkbox(
-        "建立全新策略",
+        "Create a new strategy",
         value=(existing is None),
-        help="修改現有條件時請不要勾選。",
+        help="Leave unchecked when editing an existing strategy.",
     )
 
+    # Public-facing example is display-only: never prefill the input box.
+    if IS_GUEST:
+        with st.container(border=True):
+            st.markdown("**Example strategy (copy and customize):**")
+            st.code(
+                "Buy AAPL when RSI(14) is below 30.\n"
+                "Sell when RSI(14) is above 70.\n"
+                "Set a fixed stop loss of 7% and a take profit of 15%.\n"
+                "Backtest the past 5 years.",
+                language=None,
+            )
+            st.caption(
+                "This is an example only. Enter your own strategy "
+                "in the empty field below."
+            )
+
     strategy_text = st.text_area(
-        "輸入交易策略",
+        "Enter trading strategy",
         key="strategy_input",
         height=140,
     )
 
     if st.button(
-        "🧠 AI 解析策略",
+        "🧠 Parse Strategy with AI",
         type="primary",
         use_container_width=True,
     ):
         if not strategy_text.strip():
-            st.warning("請輸入策略內容")
+            st.warning("Please enter a strategy")
 
         else:
             try:
@@ -960,8 +1019,8 @@ if page == "🤖 AI 策略回測":
 
                     if base is None:
                         st.error(
-                            "沒有可修改的策略，"
-                            "請勾選建立全新策略。"
+                            "No existing strategy to modify;"
+                            "please select Create a new strategy."
                         )
                         st.stop()
 
@@ -980,7 +1039,20 @@ if page == "🤖 AI 策略回測":
                             ]
                         )
 
-                with st.spinner("AI 正在解析..."):
+                if IS_GUEST:
+                    used = st.session_state.get("_guest_ai_used", 0)
+                    if used >= GUEST_AI_PER_SESSION:
+                        st.warning("Guest AI limit reached (5 requests per session).")
+                        st.stop()
+                    budget = guest_ai_budget()
+                    with budget["lock"]:
+                        if budget["used"] >= GUEST_AI_PER_PROCESS:
+                            st.warning("Public AI capacity is temporarily exhausted.")
+                            st.stop()
+                        budget["used"] += 1
+                    st.session_state["_guest_ai_used"] = used + 1
+
+                with st.spinner("AI is parsing..."):
                     parsed = parse_universal_strategy(
                         strategy_text.strip(),
                         deepcopy(base),
@@ -998,12 +1070,12 @@ if page == "🤖 AI 策略回測":
                 st.session_state["ab_pair"] = None
 
                 st.success(
-                    "解析完成，請確認策略"
+                    "Parsed successfully. Please review the strategy."
                 )
 
             except Exception as exc:
                 st.error(
-                    "解析失敗："
+                    "Parsing failed: "
                     + str(exc)
                 )
 
@@ -1016,12 +1088,12 @@ if page == "🤖 AI 策略回測":
     ]
 
     if confirmed is not None:
-        with st.expander("✅ 已確認策略"):
+        with st.expander("✅ Confirmed Strategy"):
             show_strategy(confirmed)
 
     if pending is not None:
         st.divider()
-        st.subheader("📝 待確認策略")
+        st.subheader("📝 Pending Strategy")
 
         show_strategy(pending)
 
@@ -1030,7 +1102,7 @@ if page == "🤖 AI 策略回測":
         ]
 
         if isinstance(base, dict):
-            with st.expander("修改前後差異"):
+            with st.expander("Changes from previous strategy"):
                 st.text(
                     format_strategy_diff(
                         base,
@@ -1042,14 +1114,14 @@ if page == "🤖 AI 策略回測":
 
         with a:
             run_clicked = st.button(
-                "✅ 確認並執行回測",
+                "✅ Confirm & Run Backtest",
                 type="primary",
                 use_container_width=True,
             )
 
         with b:
             cancel_clicked = st.button(
-                "取消待確認策略",
+                "Discard Pending Strategy",
                 use_container_width=True,
             )
 
@@ -1070,7 +1142,7 @@ if page == "🤖 AI 策略回測":
         if run_clicked:
             # 先進行回測
             try:
-                with st.spinner("正在回測..."):
+                with st.spinner("Running backtest..."):
                     df, trades, stats = (
                         run_universal_backtest(
                             deepcopy(pending)
@@ -1096,7 +1168,7 @@ if page == "🤖 AI 策略回測":
 
             except Exception as exc:
                 st.error(
-                    "❌ 回測失敗："
+                    "❌ Backtest failed: "
                     + str(exc)
                 )
                 st.stop()
@@ -1107,7 +1179,7 @@ if page == "🤖 AI 策略回測":
             # 本機模式 SQLite 優先。
             try:
                 with st.spinner(
-                    "正在保存回測結果..."
+                    "Saving backtest..."
                 ):
                     notice = persist_state(
                         deepcopy(pending),
@@ -1117,23 +1189,23 @@ if page == "🤖 AI 策略回測":
 
             except CloudConflictError:
                 st.error(
-                    "❌ Supabase 雲端版本已改變。"
-                    "為避免覆蓋其他裝置的策略，"
-                    "本次保存已取消。"
+                    "❌ Supabase version has changed."
+                    "To avoid overwriting another session,"
+                    "this save was canceled."
                 )
                 st.info(
-                    "待確認策略仍然保留。"
-                    "請先確認雲端最新資料。"
+                    "Pending strategy is preserved."
+                    "Please review the latest cloud data."
                 )
                 st.stop()
 
             except Exception as exc:
                 st.error(
-                    "❌ 保存失敗，"
-                    "新策略尚未確認。"
+                    "❌ Save failed;"
+                    "new strategy was not confirmed."
                 )
                 st.caption(
-                    "錯誤類型："
+                    "Error type: "
                     + type(exc).__name__
                 )
                 st.stop()
@@ -1173,7 +1245,7 @@ if page == "🤖 AI 策略回測":
         st.divider()
 
         st.subheader(
-            "📊 最近一次回測績效"
+            "📊 Latest Backtest Performance"
         )
 
         strategy = result["strategy"]
@@ -1181,7 +1253,7 @@ if page == "🤖 AI 策略回測":
         st.caption(
             f"{strategy['symbol']}｜"
             f"{strategy['years']}年｜"
-            f"固定停損 "
+            f"Fixed stop loss "
             f"{setting(strategy.get('stop_loss'))}"
         )
 
@@ -1191,7 +1263,7 @@ if page == "🤖 AI 策略回測":
                 get_metrics(result),
             )
 
-            st.subheader("資產曲線")
+            st.subheader("Equity curve")
 
             st.line_chart(
                 equity_curve(result["df"]),
@@ -1200,7 +1272,7 @@ if page == "🤖 AI 策略回測":
 
         except Exception as exc:
             st.warning(
-                "績效顯示失敗："
+                "Unable to display performance: "
                 + str(exc)
             )
 
@@ -1209,8 +1281,8 @@ if page == "🤖 AI 策略回測":
 # 7. A/B 策略比較
 # ==========================================
 
-elif page == "⚖️ A/B 策略比較":
-    st.title("⚖️ A/B 策略比較")
+elif page == "⚖️ A/B Strategy Comparison":
+    st.title("⚖️ A/B Strategy Comparison")
 
     pending = st.session_state[
         "pending_strategy"
@@ -1237,22 +1309,22 @@ elif page == "⚖️ A/B 策略比較":
         or not isinstance(b, dict)
     ):
         st.info(
-            "請先建立策略 A，"
-            "再修改產生策略 B。"
+            "Please create Strategy A，"
+            " then edit it to produce Strategy B。"
         )
 
     elif a == b:
-        st.warning("兩個策略設定相同")
+        st.warning("Both strategies are identical")
 
     else:
-        st.write("**策略 A：修改前**")
+        st.write("**Strategy A: Before**")
 
         st.caption(
             f"{a.get('symbol')}｜"
             f"停損 {setting(a.get('stop_loss'))}"
         )
 
-        st.write("**策略 B：修改後**")
+        st.write("**Strategy B: After**")
 
         st.caption(
             f"{b.get('symbol')}｜"
@@ -1260,7 +1332,7 @@ elif page == "⚖️ A/B 策略比較":
         )
 
         with st.expander(
-            "查看條件差異",
+            "Review rule differences",
             expanded=True,
         ):
             st.text(
@@ -1268,13 +1340,13 @@ elif page == "⚖️ A/B 策略比較":
             )
 
         if st.button(
-            "🚀 執行 A/B 對照回測",
+            "🚀 Run A/B Backtest",
             type="primary",
             use_container_width=True,
         ):
             try:
                 with st.spinner(
-                    "正在比較策略..."
+                    "Comparing strategies..."
                 ):
                     compared = compare_strategies(
                         deepcopy(a),
@@ -1292,11 +1364,11 @@ elif page == "⚖️ A/B 策略比較":
                     deepcopy(b),
                 )
 
-                st.success("A/B 比較完成")
+                st.success("A/B comparison completed")
 
             except Exception as exc:
                 st.error(
-                    "A/B 比較失敗："
+                    "A/B comparison failed: "
                     + str(exc)
                 )
 
@@ -1316,12 +1388,12 @@ elif page == "⚖️ A/B 策略比較":
                 show_ab(comparison)
             except Exception as exc:
                 st.error(
-                    "比較報告顯示失敗："
+                    "Unable to display comparison: "
                     + str(exc)
                 )
 
         st.caption(
-            "A/B 比較不會修改已確認策略。"
+            "A/B comparison does not modify the confirmed strategy."
         )
 
 
@@ -1329,20 +1401,20 @@ elif page == "⚖️ A/B 策略比較":
 # 8. Telegram 紀錄與策略匯入
 # ==========================================
 
-elif page == "📱 Telegram 紀錄與匯入":
-    st.title("📱 Telegram 策略紀錄")
+elif page == "📱 Telegram Records & Import":
+    st.title("📱 Telegram Strategy Records")
 
     st.info(
         (
-            "目前讀取 Supabase 的 Telegram 快照。"
+            "Reading Telegram snapshot from Supabase."
             if IS_CLOUD
-            else "目前讀取本機 Telegram SQLite。"
+            else "Reading local Telegram SQLite records."
         )
-        + " 匯入只建立網頁待確認提案。"
+        + " Import only creates a pending web proposal."
     )
 
     if st.button(
-        "🔄 重新讀取 Telegram",
+        "🔄 Refresh Telegram Records",
         use_container_width=True,
     ):
         st.rerun()
@@ -1352,7 +1424,7 @@ elif page == "📱 Telegram 紀錄與匯入":
 
     except Exception as exc:
         st.error(
-            "Telegram 資料讀取失敗："
+            "Unable to load Telegram records: "
             + type(exc).__name__
         )
         st.stop()
@@ -1371,11 +1443,11 @@ elif page == "📱 Telegram 紀錄與匯入":
         "latest_backtest"
     )
 
-    st.subheader("✅ Telegram 已確認策略")
+    st.subheader("✅ Confirmed Telegram Strategy")
 
     if not isinstance(tg_strategy, dict):
         st.info(
-            "Telegram 沒有已確認策略。"
+            "No confirmed Telegram strategy."
         )
 
     else:
@@ -1383,15 +1455,15 @@ elif page == "📱 Telegram 紀錄與匯入":
 
         with a:
             st.metric(
-                "股票",
+                "Ticker",
                 str(tg_strategy.get(
-                    "symbol", "未知"
+                    "symbol", "Unknown"
                 )),
             )
 
         with b:
             st.metric(
-                "固定停損",
+                "Fixed stop loss",
                 setting(
                     tg_strategy.get(
                         "stop_loss"
@@ -1400,12 +1472,12 @@ elif page == "📱 Telegram 紀錄與匯入":
             )
 
         with st.expander(
-            "完整 Telegram 策略"
+            "Full Telegram strategy"
         ):
             show_strategy(tg_strategy)
 
         st.divider()
-        st.subheader("📥 匯入網頁")
+        st.subheader("📥 Import into Web Workspace")
 
         web_confirmed = st.session_state[
             "confirmed_strategy"
@@ -1419,16 +1491,16 @@ elif page == "📱 Telegram 紀錄與匯入":
 
         if isinstance(web_pending, dict):
             st.warning(
-                "目前已有待確認提案，"
-                "匯入會取代它。"
+                "A pending proposal already exists;"
+                "importing will replace it."
             )
 
             permitted = st.checkbox(
-                "我同意取代目前待確認提案"
+                "I agree to replace the pending proposal"
             )
 
         if st.button(
-            "📥 匯入為網頁待確認策略",
+            "📥 Import as Pending Web Strategy",
             type="primary",
             use_container_width=True,
             disabled=not permitted,
@@ -1438,7 +1510,7 @@ elif page == "📱 Telegram 紀錄與匯入":
                 or not tg_strategy.get("years")
             ):
                 st.error(
-                    "Telegram 策略缺少必要欄位"
+                    "Telegram strategy is missing required fields"
                 )
 
             else:
@@ -1467,12 +1539,12 @@ elif page == "📱 Telegram 紀錄與匯入":
                 st.session_state["ab_pair"] = None
 
                 st.success(
-                    "✅ 已匯入待確認策略。"
-                    "請前往 AI 策略回測頁確認。"
+                    "✅ Imported as a pending strategy."
+                    "Review it on the AI Strategy Backtest page."
                 )
 
     st.divider()
-    st.subheader("🗂️ 歷史策略版本")
+    st.subheader("🗂️ Strategy Version History")
 
     valid_history = [
         item
@@ -1481,26 +1553,26 @@ elif page == "📱 Telegram 紀錄與匯入":
     ] if isinstance(history, list) else []
 
     st.write(
-        f"版本數量：{len(valid_history)}"
+        f"Number of versions:{len(valid_history)}"
     )
 
     if valid_history:
         index = st.selectbox(
-            "選擇歷史版本",
+            "Select historical version",
             range(len(valid_history)),
             format_func=lambda i: (
-                f"版本 {i + 1}｜"
-                f"{valid_history[i].get('symbol', '未知')}"
+                f"Version {i + 1}｜"
+                f"{valid_history[i].get('symbol', 'Unknown')}"
             ),
         )
 
         show_strategy(valid_history[index])
 
     else:
-        st.info("沒有歷史版本")
+        st.info("No historical versions")
 
     st.divider()
-    st.subheader("📝 Telegram 待確認提案")
+    st.subheader("📝 Telegram Pending Proposal")
 
     if isinstance(tg_pending, dict):
         proposed = tg_pending.get("strategy")
@@ -1508,20 +1580,20 @@ elif page == "📱 Telegram 紀錄與匯入":
         if isinstance(proposed, dict):
             show_strategy(proposed)
         else:
-            st.warning("提案資料不完整")
+            st.warning("Proposal data is incomplete")
     else:
-        st.write("目前沒有待確認提案")
+        st.write("No pending proposal")
 
     st.divider()
-    st.subheader("📊 Telegram 最近一次回測")
+    st.subheader("📊 Latest Telegram Backtest")
 
     if isinstance(record, dict):
         stats = record.get("stats") or {}
         trades = record.get("trades") or []
 
         st.write(
-            "股票：",
-            record.get("symbol", "未知"),
+            "Ticker:",
+            record.get("symbol", "Unknown"),
         )
 
         if isinstance(stats, dict):
@@ -1529,7 +1601,7 @@ elif page == "📱 Telegram 紀錄與匯入":
 
             with a:
                 st.metric(
-                    "策略報酬",
+                    "Strategy return",
                     pct(
                         stats.get("total_return"),
                         True,
@@ -1538,7 +1610,7 @@ elif page == "📱 Telegram 紀錄與匯入":
 
             with b:
                 st.metric(
-                    "期末資產",
+                    "Ending equity",
                     money(
                         stats.get("final_equity")
                     ),
@@ -1554,7 +1626,7 @@ elif page == "📱 Telegram 紀錄與匯入":
             )
 
             st.download_button(
-                "⬇️ 匯出 Telegram 交易明細",
+                "⬇️ Export Telegram Trades",
                 table.to_csv(
                     index=False
                 ).encode("utf-8-sig"),
@@ -1563,30 +1635,30 @@ elif page == "📱 Telegram 紀錄與匯入":
             )
 
         else:
-            st.info("沒有已完成交易")
+            st.info("No closed trades")
 
     else:
         st.info(
-            "沒有已儲存的 Telegram 回測"
+            "No saved Telegram backtest"
         )
 
 
 # ==========================================
-# 9. Telegram / 網頁策略一致性
+# 9. Telegram / Web策略一致性
 # ==========================================
 
-elif page == "🔄 雙端同步檢查":
+elif page == "🔄 Cross-platform Comparison":
     st.title(
-        "🔄 Telegram／網頁策略同步檢查"
+        "🔄 Telegram / Web Strategy Comparison"
     )
 
     st.info(
-        "比較兩邊的已確認策略。"
-        "本頁不修改資料庫。"
+        "Compare confirmed strategies."
+        "This page does not modify the database."
     )
 
     if st.button(
-        "🔄 重新檢查",
+        "🔄 Recheck",
         type="primary",
         use_container_width=True,
     ):
@@ -1601,7 +1673,7 @@ elif page == "🔄 雙端同步檢查":
 
     except Exception as exc:
         st.error(
-            "資料讀取失敗："
+            "Data loading failed: "
             + type(exc).__name__
         )
         st.stop()
@@ -1625,40 +1697,40 @@ elif page == "🔄 雙端同步檢查":
 
         if isinstance(tg, dict):
             st.write(
-                "股票：",
+                "Ticker:",
                 tg.get("symbol"),
             )
 
             st.write(
-                "固定停損：",
+                "Fixed stop loss:",
                 setting(tg.get("stop_loss")),
             )
 
-            with st.expander("查看完整策略"):
+            with st.expander("View full strategy"):
                 show_strategy(tg)
 
         else:
-            st.info("沒有已確認策略")
+            st.info("No confirmed strategy")
 
     with b:
-        st.subheader("🌐 網頁版")
+        st.subheader("🌐 Web Workspace")
 
         if isinstance(wb, dict):
             st.write(
-                "股票：",
+                "Ticker:",
                 wb.get("symbol"),
             )
 
             st.write(
-                "固定停損：",
+                "Fixed stop loss:",
                 setting(wb.get("stop_loss")),
             )
 
-            with st.expander("查看完整策略"):
+            with st.expander("View full strategy"):
                 show_strategy(wb)
 
         else:
-            st.info("沒有已確認策略")
+            st.info("No confirmed strategy")
 
     st.divider()
 
@@ -1667,17 +1739,17 @@ elif page == "🔄 雙端同步檢查":
         or not isinstance(wb, dict)
     ):
         st.warning(
-            "至少一邊沒有已確認策略"
+            "At least one side has no confirmed strategy"
         )
 
     elif tg == wb:
         st.success(
-            "✅ 兩邊已確認策略的全部設定一致！"
+            "✅ Both confirmed strategies match!"
         )
 
     else:
         st.warning(
-            "⚠️ 兩邊已確認策略不同"
+            "⚠️ Confirmed strategies differ"
         )
 
         try:
@@ -1687,12 +1759,12 @@ elif page == "🔄 雙端同步檢查":
         except Exception:
             st.json({
                 "Telegram": tg,
-                "網頁": wb,
+                "Web": wb,
             })
 
     st.caption(
-        "此頁比較策略內容，"
-        "不是雲端儲存版本狀態。"
+        "This page compares strategy rules,"
+        "not storage version hashes."
     )
 
 
@@ -1707,8 +1779,8 @@ else:
 
     if result is None:
         st.info(
-            "目前沒有已保存回測。"
-            "請先在 AI 策略回測頁完成回測。"
+            "No saved backtest is available."
+            "Run a backtest in the AI Strategy page first."
         )
         st.stop()
 
@@ -1718,15 +1790,15 @@ else:
     strategy = result["strategy"]
     symbol = strategy["symbol"]
 
-    if page == "📈 績效分析":
-        st.title("📈 完整績效分析")
+    if page == "📈 Performance Analysis":
+        st.title("📈 Detailed Performance Analysis")
 
         scorecards(
             stats,
             get_metrics(result),
         )
 
-        st.subheader("資產績效曲線")
+        st.subheader("Equity Performance Chart")
 
         st.line_chart(
             equity_curve(df),
@@ -1740,7 +1812,7 @@ else:
             )
 
             with st.expander(
-                "交易品質分析"
+                "Trade Quality Analysis"
             ):
                 st.text(
                     format_trade_analytics(
@@ -1751,29 +1823,29 @@ else:
 
         except Exception as exc:
             st.warning(
-                "交易分析失敗："
+                "Trade analysis failed: "
                 + str(exc)
             )
 
-    elif page == "📋 交易明細":
-        st.title("📋 歷史交易明細")
+    elif page == "📋 Trade History":
+        st.title("📋 Historical Trade Details")
 
-        st.write("股票：", symbol)
+        st.write("Ticker:", symbol)
 
         st.write(
-            "固定停損：",
+            "Fixed stop loss:",
             setting(strategy.get("stop_loss")),
         )
 
         st.write(
-            "追蹤停損：",
+            "Trailing stop: ",
             setting(
                 strategy.get("trailing_stop_pct")
             ),
         )
 
         st.write(
-            "固定停利：",
+            "Fixed take profit: ",
             setting(
                 strategy.get("take_profit")
             ),
@@ -1789,7 +1861,7 @@ else:
             )
 
             st.download_button(
-                "⬇️ 匯出交易明細 CSV",
+                "⬇️ Export Trade History CSV",
                 table.to_csv(
                     index=False
                 ).encode("utf-8-sig"),
@@ -1799,11 +1871,11 @@ else:
 
         else:
             st.info(
-                "這次沒有已完成交易"
+                "No closed trades in this backtest"
             )
 
-    elif page == "📅 年度績效":
-        st.title("📅 年度績效分析")
+    elif page == "📅 Annual Performance":
+        st.title("📅 Annual Performance Analysis")
 
         try:
             yearly = calculate_yearly_performance(
@@ -1812,7 +1884,7 @@ else:
             )
 
             st.text(
-                format_yearly_report(
+                format_yearly_report_en(
                     yearly,
                     symbol=symbol,
                 )
@@ -1820,20 +1892,20 @@ else:
 
         except Exception as exc:
             st.error(
-                "年度績效分析失敗："
+                "Annual analysis failed: "
                 + str(exc)
             )
 
-    elif page == "🧪 樣本內／樣本外":
-        st.title("🧪 分段績效分析")
+    elif page == "🧪 In-sample / Out-of-sample":
+        st.title("🧪 Segmented Performance Analysis")
 
         st.info(
-            "此功能將既有回測分段，"
-            "不等於真正獨立的樣本外驗證。"
+            "This divides an existing backtest into segments;"
+            "it is not an independent out-of-sample test."
         )
 
         ratio = st.slider(
-            "樣本內比例",
+            "In-sample proportion",
             min_value=20,
             max_value=80,
             value=70,
@@ -1849,7 +1921,7 @@ else:
             )
 
             st.text(
-                format_oos_report(
+                format_oos_report_en(
                     oos,
                     symbol=symbol,
                 )
@@ -1857,7 +1929,7 @@ else:
 
         except Exception as exc:
             st.error(
-                "分段分析失敗："
+                "Segmented analysis failed: "
                 + str(exc)
             )
 
@@ -1865,12 +1937,12 @@ else:
 st.divider()
 
 st.caption(
-    "US Stock Strategy Lab v4.3｜"
+    "US Stock Strategy Lab v4.3 | "
     + (
-        "Supabase 直接保存"
+        "Supabase direct save"
         if IS_CLOUD
-        else "SQLite 優先、Supabase 同步"
+        else "SQLite-first with Supabase sync"
     )
-    + "｜Telegram 策略獨立｜"
-    "歷史回測不保證未來績效。"
+    + " | Telegram strategies are separate | "
+    "Historical performance does not guarantee future results."
 )

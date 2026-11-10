@@ -211,3 +211,32 @@ if __name__ == "__main__":
         "年度績效模組已載入，"
         "請執行 test_yearly_performance.py"
     )
+
+
+def format_yearly_report_en(yearly_results, symbol="Stock"):
+    """English text report for the Streamlit website; calculations are unchanged."""
+    if not yearly_results:
+        return "No annual performance data is available."
+
+    lines = [f"📅 {symbol} | Yearly Performance Comparison", ""]
+    for item in yearly_results:
+        lines.extend([
+            f"🗓 {item['year']}",
+            f"Strategy Return: {item['strategy_return']:+.2f}%",
+            f"Buy & Hold Return: {item['buy_hold_return']:+.2f}%",
+            f"Excess Return: {item['excess_return']:+.2f} percentage points",
+            f"Annual Maximum Drawdown: {item['max_drawdown']:.2f}%",
+            f"Year-End / Period-End Equity: ${item['ending_equity']:,.2f}",
+            "",
+        ])
+    lines.extend([
+        "📌 Methodology Notes",
+        "Returns are calculated from historical daily portfolio equity and closing prices.",
+        "The first and last calendar years may cover only part of a year.",
+        "Each return is for the actual period covered, not an annualized return.",
+        "For the first year, Buy & Hold uses the first trading day's close as its baseline.",
+        "For later years, the previous year's last trading day is the baseline.",
+        "The annual maximum drawdown includes the beginning-of-year equity baseline.",
+        "Open positions are marked to market using each day's closing price.",
+    ])
+    return "\n".join(lines)

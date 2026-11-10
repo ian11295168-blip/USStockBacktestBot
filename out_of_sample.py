@@ -272,3 +272,44 @@ def format_oos_report(result, symbol="股票"):
     ]
 
     return "\n".join(lines)
+
+
+def format_oos_report_en(result, symbol="Stock"):
+    """English presentation of an existing equity curve split; no retraining occurs."""
+    train = result["train"]
+    test = result["test"]
+
+    def percentage(value):
+        return "N/A" if value is None else f"{value:+.2f}%"
+
+    def number(value):
+        return "N/A" if value is None else f"{value:.2f}"
+
+    lines = [
+        f"🧪 {symbol} | In-Sample / Out-of-Sample Analysis",
+        "",
+        f"Split Date: {result['split_date']}",
+        "",
+    ]
+    for title, segment in (("📘 In-Sample (Earlier Period)", train),
+                           ("📗 Out-of-Sample (Later Period)", test)):
+        lines.extend([
+            title,
+            f"Date Range: {segment['start_date']} to {segment['end_date']}",
+            f"Trading Days: {segment['trading_days']}",
+            f"Strategy Return: {percentage(segment['strategy_return'])}",
+            f"Buy & Hold Return: {percentage(segment['buy_hold_return'])}",
+            f"Maximum Drawdown: {percentage(segment['max_drawdown'])}",
+            f"Sharpe Ratio: {number(segment['sharpe_ratio'])}",
+            "",
+        ])
+    lines.extend([
+        "📌 Important Notes",
+        "This report splits an existing historical backtest equity curve.",
+        "Positions are not forcibly closed at the split date; positions from",
+        "the earlier period may carry into the later period.",
+        "The later period is a meaningful out-of-sample evaluation only if",
+        "its data was not used to design, select, or tune the strategy.",
+        "Sharpe ratios assume a 0% risk-free rate.",
+    ])
+    return "\n".join(lines)
